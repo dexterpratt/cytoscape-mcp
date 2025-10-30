@@ -115,18 +115,13 @@ class CytoscapeMCPServer:
                 ),
                 Tool(
                     name="load_network_file",
-                    description="Load a network from file (SIF, GraphML, XGMML, etc.)",
+                    description="Load a network from file (SIF, GraphML, XGMML, etc.). File format is auto-detected by Cytoscape.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
                                 "description": "Path to network file"
-                            },
-                            "first_row_as_column_names": {
-                                "type": "boolean",
-                                "description": "Treat first row as column names",
-                                "default": True
                             }
                         },
                         "required": ["file_path"]
@@ -519,8 +514,11 @@ class CytoscapeMCPServer:
                 text=f"Failed to create network: {str(e)}"
             )]
 
-    async def _load_network_file(self, file_path: str, first_row_as_column_names: bool = True) -> List[TextContent]:
-        """Load network from file"""
+    async def _load_network_file(self, file_path: str) -> List[TextContent]:
+        """Load network from file
+
+        Note: Cytoscape auto-detects file format and handles headers appropriately.
+        """
         try:
             result = p4c.import_network_from_file(file=file_path)
             network_suid = result['networks'][0] if result and 'networks' in result and result['networks'] else None
@@ -554,15 +552,16 @@ class CytoscapeMCPServer:
         try:
             # Gather network information using available py4cytoscape functions
             info = {}
-            
+
             if network:
-                info['suid'] = p4c.get_network_suid(title=network) if isinstance(network, str) else network
-                info['name'] = p4c.get_network_name(suid=info['suid'])
+                # get_network_suid accepts network name or SUID
+                info['suid'] = p4c.get_network_suid(network=network) if isinstance(network, str) else network
+                info['name'] = p4c.get_network_name(network=info['suid'])
             else:
                 # Get current network info
                 info['suid'] = p4c.get_network_suid()
                 info['name'] = p4c.get_network_name()
-            
+
             info['node_count'] = p4c.get_node_count(network=info['suid'])
             info['edge_count'] = p4c.get_edge_count(network=info['suid'])
             info['view_suid'] = p4c.get_network_view_suid(network=info['suid'])
@@ -671,22 +670,30 @@ class CytoscapeMCPServer:
 
     async def _load_string_network(self, protein_query: str, species: int = 9606,
                                  confidence_score: float = 0.4, network_type: str = "functional") -> List[TextContent]:
-        """Load STRING protein network"""
+        """Load STRING protein network
+
+        Note: This requires the stringApp to be installed in Cytoscape.
+        Uses the STRING database protein query command via CyREST.
+        """
         try:
-            result = p4c.string_protein_query(
-                query=protein_query,
-                species=species,
-                confidence_score=confidence_score,
-                network_type=network_type
-            )
+            # Build STRING protein query command
+            # STRING uses 'full' for functional networks and 'physical' for physical networks
+            string_network_type = "full" if network_type == "functional" else "physical"
+
+            # Construct the command string for STRING app
+            string_cmd = f'string protein query query="{protein_query}" species={species} cutoff={confidence_score} networkType={string_network_type}'
+
+            # Execute the STRING command via CyREST
+            result = p4c.commands_run(cmd_string=string_cmd)
+
             return [TextContent(
                 type="text",
-                text=f"Loaded STRING network: {json.dumps(result, indent=2)}"
+                text=f"Loaded STRING network for proteins: {protein_query}\nSpecies: {species}\nConfidence: {confidence_score}\nType: {network_type}\nResult: {json.dumps(result, indent=2) if result else 'Success'}"
             )]
         except Exception as e:
             return [TextContent(
                 type="text",
-                text=f"Failed to load STRING network: {str(e)}"
+                text=f"Failed to load STRING network: {str(e)}\nNote: Ensure the stringApp is installed in Cytoscape (Apps -> App Manager -> Install Apps -> stringApp)"
             )]
 
     async def _import_network_from_ndex(self, ndex_id: str, username: Optional[str] = None,
@@ -718,15 +725,15 @@ class CytoscapeMCPServer:
         try:
             kwargs = {
                 "username": username,
-                "password": password, 
-                "is_public": is_public,
+                "password": password,
+                "isPublic": is_public,  # Note: py4cytoscape uses camelCase
                 "ndex_url": ndex_url
             }
             if network:
                 kwargs["network"] = network
             if metadata:
                 kwargs["metadata"] = metadata
-                
+
             ndex_id = p4c.export_network_to_ndex(**kwargs)
             return [TextContent(
                 type="text",
@@ -770,14 +777,14 @@ class CytoscapeMCPServer:
             kwargs = {
                 "username": username,
                 "password": password,
-                "is_public": is_public,
+                "isPublic": is_public,  # Note: py4cytoscape uses camelCase
                 "ndex_url": ndex_url
             }
             if network:
                 kwargs["network"] = network
             if metadata:
                 kwargs["metadata"] = metadata
-                
+
             result = p4c.update_network_in_ndex(**kwargs)
             return [TextContent(
                 type="text",

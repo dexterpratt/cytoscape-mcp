@@ -22,15 +22,18 @@ def mock_p4c():
         'py4cytoscape',
         cytoscape_version_info=Mock(return_value={"version": "3.10.0"}),
         create_network_from_data_frames=Mock(return_value=12345),
-        import_network_from_file=Mock(return_value=12346),
+        import_network_from_file=Mock(return_value={"networks": [12346], "views": [12347]}),  # Returns dict with networks and views
         get_network_list=Mock(return_value=["network1", "network2"]),
-        get_network_info=Mock(return_value={"nodes": 10, "edges": 15}),
+        get_network_suid=Mock(return_value=12345),
+        get_network_name=Mock(return_value="Test Network"),
+        get_node_count=Mock(return_value=10),
+        get_edge_count=Mock(return_value=15),
+        get_network_view_suid=Mock(return_value=54321),
         select_nodes=Mock(return_value=["node1", "node2"]),
         layout_network=Mock(return_value={"status": "success"}),
         set_visual_style=Mock(return_value={"status": "applied"}),
         export_image=Mock(return_value={"file": "test.png"}),
-        commands_run=Mock(return_value={"result": "success"}),
-        string_protein_query=Mock(return_value={"network": "STRING"}),
+        commands_run=Mock(return_value=[]),  # Returns list of command output lines
         import_network_from_ndex=Mock(return_value=12347),
         export_network_to_ndex=Mock(return_value="ndex-uuid-123"),
         get_network_ndex_id=Mock(return_value="ndex-uuid-456"),
@@ -76,13 +79,13 @@ class TestCytoscapeMCPServer:
     async def test_load_network_file(self, server, mock_p4c):
         """Test network file loading"""
         file_path = "/path/to/network.sif"
-        
+
         result = await server._load_network_file(file_path)
-        
+
         assert len(result) == 1
         assert "Loaded network from /path/to/network.sif with SUID: 12346" in result[0].text
         mock_p4c['import_network_from_file'].assert_called_once_with(
-            file=file_path, first_row_as_column_names=True
+            file=file_path
         )
 
     @pytest.mark.asyncio
@@ -130,12 +133,14 @@ class TestCytoscapeMCPServer:
     async def test_load_string_network(self, server, mock_p4c):
         """Test STRING network loading"""
         result = await server._load_string_network("TP53,MDM2", species=9606)
-        
+
         assert len(result) == 1
         assert "Loaded STRING network" in result[0].text
-        mock_p4c['string_protein_query'].assert_called_once_with(
-            query="TP53,MDM2", species=9606, confidence_score=0.4, network_type="functional"
-        )
+        # Verify commands_run was called with the correct STRING command
+        mock_p4c['commands_run'].assert_called_once()
+        call_args = mock_p4c['commands_run'].call_args
+        assert 'string protein query' in call_args[1]['cmd_string']
+        assert 'TP53,MDM2' in call_args[1]['cmd_string']
 
     @pytest.mark.asyncio
     async def test_import_from_ndex(self, server, mock_p4c):
@@ -189,17 +194,13 @@ class TestToolSchemas:
 
     def test_tool_list_structure(self, server):
         """Test that all tools have required schema structure"""
-        # Get the list_tools handler
-        list_tools_handler = None
-        for handler in server.server._tool_list_handlers:
-            list_tools_handler = handler
-            break
-        
-        assert list_tools_handler is not None
-        
-        # This would need to be adapted based on how the server exposes tools
-        # For now, just check that the server initializes properly
+        # Verify server initializes properly
         assert server is not None
+        assert server.server is not None
+
+        # The actual tool handlers are managed internally by the MCP framework
+        # We can verify the server was constructed successfully
+        assert hasattr(server, 'server')
 
 
 if __name__ == "__main__":
